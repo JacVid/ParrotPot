@@ -1,0 +1,21 @@
+{
+  "domain": "parrotpot",
+  "name": "Parrot Pot",
+  "version": "0.1.0",
+  "dependencies": ["bluetooth"],
+  "bluetooth": [
+    {
+      "address": "A0:14:3D:*:*:*",
+      "service_uuid": "39e1fc00-84a8-11e2-afba-0002a5d5c51b"
+    }
+  ],
+  "codeowners": ["@JacVid"],
+  "config_flow": true,
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "loggers": ["custom_components.parrotpot"],
+  "requirements": ["bleak", "bleak-retry-connector"],
+  "issue_tracker": "https://github.com/JacVid/ParrotPot/issues",
+  "homeassistant": "2026.4.3",
+  "documentation": "https://github.com/JacVid/ParrotPot"
+}
