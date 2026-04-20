@@ -21,4 +21,6 @@ Once set up, you can access your Parrot Pot directly from your Home Assistant da
 
 ## Troubleshooting
 - Ensure that your Parrot Pot is not connected to your smartphone.
-- Check Home Assistant logs for any errors related to the integration.
+- Check Home Assistant logs for any errors related to the integration.+
+
+- <img width="992" height="865" alt="image" src="https://github.com/user-attachments/assets/226e512e-5cb3-4856-bc82-957e6a847f7d" />
