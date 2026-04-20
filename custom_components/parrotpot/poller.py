@@ -20,7 +20,7 @@ class ParrotPotPoller:
         self._mac = mac
 
     async def get_data(self):
-        device = async_ble_device_from_address(self._hass, self._mac)
+        device = async_ble_device_from_address(self._hass, self._mac, connectable=True)
         if not device:
             _LOGGER.error("Parrot Pot introuvable à l'adresse %s", self._mac)
             return None
