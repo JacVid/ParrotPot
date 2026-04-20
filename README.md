@@ -17,7 +17,7 @@ The Parrot Pot home assistant integration allows you to easily monitor your Parr
 3) Add integration via Settings → Devices & Services → Add Integration → Parrot Pot
 
 ## Usage
-Once set up, you can access your Parrot Pot directly from your Home Assistant dashboard, where you can view stats of your pot.
+Once set up, you can access your Parrot Pot directly from your Home Assistant dashboard, where you can view stats of your pot (refresh every 60 mn for batteries).
 
 ## Troubleshooting
 - Ensure that your Parrot Pot is not connected to your smartphone.
