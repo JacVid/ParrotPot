@@ -1,0 +1,5 @@
+# Decompiled official Parrot app sources (jadx) - reference only, never commit
+parrot/
+__pycache__/
+.venv/
+.pytest_cache/

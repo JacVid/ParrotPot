@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Parrot Pot",
+        "description": "Entrez l'adresse MAC de votre Parrot Pot.",
+        "data": {
+          "mac": "Adresse MAC"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Échec de connexion au Parrot Pot. Vérifiez qu'aucun autre appareil (téléphone/application) n'y est connecté."
+    },
+    "abort": {
+      "already_configured": "Ce Parrot Pot est déjà configuré."
+    }
+  }
+}
