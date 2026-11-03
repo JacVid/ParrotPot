@@ -135,6 +135,54 @@ Config-flow strings: title "Parrot Pot", description "Entrez l'adresse MAC de
 votre Parrot Pot." / "Enter the MAC address of your Parrot Pot.", field
 "Adresse MAC" / "MAC address".
 
+## Firmware versions & OTA (from the decompiled app)
+
+- App version: **4.6.2** (BuildConfig.java) — the last Flower Power app.
+- The app bundles **no firmware binaries** (assets/ contains only FAQ JSONs).
+  Firmware was fetched from Parrot's server per device via
+  `FirmwareUpdateEntity` {firmware_upgrade_available, firmware_version,
+  firmware_update_url}.
+- API base: `https://api-flower-power-pot.parrot.com/` — **DNS dead as of
+  2026-11**, so official OTA updates are permanently impossible. Devices are
+  frozen on whatever firmware they currently run.
+- OTA transport: TI OAD via Air Download Service `f000ffc0-0451-4000-...`
+  (UUID_OAD_IMAGE_NOTIFY / UUID_OAD_IMAGE_BLOCK, 25-byte frames @ 20 ms,
+  FirmwareUpdate.java).
+- Version constants in the app: only **2.0.0 / 2.0.1 / 2.0.2**
+  (GardenObject.FW_2_0_x). Flower Powers on those versions get a *forced*
+  update dialog ("firmware_update_forcedUpdate"); versions containing "-1."
+  route to UpdateFwOldSensorActivity (legacy 1.x sensors).
+- Consequence for this integration: no device will EVER gain the calibrated
+  fa09/fa0a/fa0b float32 characteristics via OTA again. The raw uint16
+  fallback decoding (fa01/fa04/fa05 via protocol.RAW_CONVERTERS) and the
+  runtime GATT capability probing are therefore essential, not optional.
+- Device types (HawaiiDevice): 1 = flower-power, 2 = h2o (Parrot H2O),
+  3 = pot.
+- Note: the "Plant DR = firmware >= 2.0.3" claim elsewhere in this doc was an
+  inference; the app itself contains no 2.0.3 literal. Plant DR presence is
+  determined by our runtime probe of service 39e1fd80, which is robust.
+
+## External protocol sources (cross-referenced)
+
+Besides the decompiled official app (`parrot/`), two public sources were
+cross-checked against it — all consistent, no contradictions:
+
+1. **mahoutech/smart-home `docs/parrotpot-ble-api.md`** — Parrot Pot GATT map:
+   confirms battery 2a19 uint8 %, calibrated live fa09/fa0a/fa0b, tank level
+   f907, manual watering trigger f906; LED blink via write `1`/`0` to fa07;
+   idle-disconnect after ~1 s without requests; advertised name `Parrot pot AABB`.
+   Notes fa0c–fa0e (Ea/Ecb/Ec porous) exist only on Flower Power, NOT on Pot.
+2. **sandeepmistry/node-flower-power PR #8 (commit 9dcb7e2)** — Parrot's
+   official FlowerPower-BLE conversion polynomials for the RAW uint16
+   characteristics: fa01 light (0.0864·192773.17·raw^-1.0606619 -> mol/m²/d),
+   fa04 air temperature (cubic, clamp [-10,55] °C), fa05 soil moisture
+   (quartic+cube chain, clamp [0,60] %). fd01 = uptime seconds (NOT wall
+   clock — wall clock is fd02, which we use). fa0b confirmed as DLI.
+
+Raw fallback implemented: poller reads calibrated fa09/fa0a/fa0b first;
+if a value is missing (older firmware), it decodes the corresponding raw
+characteristic (fa05/fa04/fa01) via `protocol.RAW_CONVERTERS`.
+
 ## Open questions
 - Empirical validation on user's hardware via DEBUG raw-byte logs:
   which chars actually exist, what the raw values look like.
