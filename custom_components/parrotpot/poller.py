@@ -9,10 +9,12 @@ IEEE-754 float32 (ByteData.getFloat in the app). Battery is the standard
 BLE characteristic 0x2a19, a plain uint8 percent.
 """
 import struct
+import time
 import logging
 from bleak import BleakClient
 from bleak_retry_connector import establish_connection, close_stale_connections
 from homeassistant.components.bluetooth import async_ble_device_from_address
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +45,14 @@ CHAR_PLANT_DR_STATUS_FLAGS = "39e1fd86" + UUID_SUFFIX    # uint8 bitmask
 CHAR_PLANT_DR_NEXT_WATERING = "39e1fd87" + UUID_SUFFIX   # uint32 LE, epoch s
 CHAR_PLANT_DR_NEXT_EMPTY_TANK = "39e1fd88" + UUID_SUFFIX # uint32 LE, epoch s
 
+# --- Clock service ---
+CHAR_UTC_TIME = "39e1fd02" + UUID_SUFFIX                 # uint32 LE, epoch s
+
+# --- Device info (standard 0x180a) ---
+CHAR_SERIAL_NUMBER = "00002a25-0000-1000-8000-00805f9b34fb"
+CHAR_FIRMWARE_REVISION = "00002a26-0000-1000-8000-00805f9b34fb"
+CHAR_DEVICE_NAME = "39e1fe03" + UUID_SUFFIX              # UTF-8
+
 # Status flag bitmask (HawaiiBleConstants in the app)
 FLAG_UNREAD_ENTRIES = 1
 FLAG_AVAILABLE = 2
@@ -58,6 +68,9 @@ class ParrotPotPoller:
         self._mac = mac
         self.has_tank = False       # set per poll from GATT service discovery
         self.has_plant_dr = False
+        self.device_name = None
+        self.firmware_revision = None
+        self.serial_number = None
 
     async def get_data(self):
         device = async_ble_device_from_address(self._hass, self._mac, connectable=True)
@@ -80,6 +93,11 @@ class ParrotPotPoller:
                     "GATT services: %s (has_tank=%s, has_plant_dr=%s)",
                     sorted(service_uuids), self.has_tank, self.has_plant_dr,
                 )
+
+                # Device info (once) + clock sync, like the official app
+                if not self.firmware_revision:
+                    await self._read_device_info(client)
+                await self._sync_clock(client)
 
                 # Live values + battery
                 for key, uuid in CHARACTERISTICS.items():
@@ -176,3 +194,66 @@ class ParrotPotPoller:
         ) as client:
             await client.write_gatt_char(CHAR_WATERING_CMD, struct.pack("<H", 8), response=True)
             _LOGGER.info("Watering command sent to %s", self._mac)
+
+    def device_info(self):
+        """Device registry attributes gathered from the device itself."""
+        info = {
+            "identifiers": {(DOMAIN, self._mac)},
+            "name": self.device_name or "Parrot Pot",
+            "manufacturer": "Parrot",
+            "model": "Parrot Pot" if self.has_tank else "Flower Power",
+        }
+        if self.firmware_revision:
+            info["sw_version"] = self.firmware_revision
+        if self.serial_number:
+            info["serial_number"] = self.serial_number
+        return info
+
+    async def _read_device_info(self, client):
+        """Read device name, firmware revision and serial number (0x180a)."""
+        try:
+            data = await client.read_gatt_char(CHAR_DEVICE_NAME)
+            self.device_name = data.decode("utf-8", errors="replace").strip("\x00").strip()
+        except Exception as e:
+            _LOGGER.debug("Device name read failed: %s", e)
+        try:
+            data = await client.read_gatt_char(CHAR_FIRMWARE_REVISION)
+            self.firmware_revision = data.decode("utf-8", errors="replace").strip("\x00").strip()
+        except Exception as e:
+            _LOGGER.debug("Firmware revision read failed: %s", e)
+        try:
+            data = await client.read_gatt_char(CHAR_SERIAL_NUMBER)
+            self.serial_number = data.decode("utf-8", errors="replace").strip("\x00").strip()
+        except Exception as e:
+            _LOGGER.debug("Serial number read failed: %s", e)
+        _LOGGER.debug(
+            "Device info: name=%s fw=%s serial=%s",
+            self.device_name, self.firmware_revision, self.serial_number,
+        )
+
+    async def _sync_clock(self, client):
+        """Sync the device clock if it drifts by more than 60 s.
+
+        Mirrors BaseTask.checkAndUpdateTime in the official app: read UTC time
+        (39e1fd02) and rewrite it when |device - host| > 60 s. Only done on
+        Parrot Pot devices (the app skips deviceType == 1).
+        """
+        if not self.has_tank:
+            return
+        try:
+            data = await client.read_gatt_char(CHAR_UTC_TIME)
+            if len(data) < 4:
+                return
+            device_time = struct.unpack_from("<I", data, 0)[0]
+            local_time = int(time.time())
+            if abs(device_time - local_time) > 60:
+                await client.write_gatt_char(
+                    CHAR_UTC_TIME, struct.pack("<I", local_time), response=True
+                )
+                _LOGGER.info(
+                    "Device clock resynced: was %d, now %d", device_time, local_time
+                )
+            else:
+                _LOGGER.debug("Device clock in sync (drift %d s)", device_time - local_time)
+        except Exception as e:
+            _LOGGER.debug("Clock sync failed: %s", e)

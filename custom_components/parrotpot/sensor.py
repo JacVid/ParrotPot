@@ -75,11 +75,7 @@ class ParrotSensor(CoordinatorEntity, SensorEntity):
         self._attr_state_class = meta.get("state_class")
         if meta.get("icon"):
             self._attr_icon = meta["icon"]
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.poller._mac)},
-            "name": "Parrot Pot",
-            "manufacturer": "Parrot",
-        }
+        self._attr_device_info = coordinator.poller.device_info()
 
     @property
     def native_value(self):

@@ -20,6 +20,9 @@ Keep this file up to date with every change.
   → device is probably a Flower Power (or a Pot with empty tank). MUST verify
   empirically by checking GATT services present: watering `39e1f900` and
   Plant DR `39e1fd80`; also read firmware revision `00002a26` and device name `39e1fe03`.
+- **RESOLVED (user confirmation): user's device HAS a tank → it is a Parrot Pot.**
+  The permanent 0% water level came from reading the wrong characteristic
+  (fc07, history bookkeeping). Correct tank level: `39e1f907` uint16 LE.
 - Plan: poller probes `client.services` and exposes tank/plant-DR entities only
   when the corresponding services exist.
 
@@ -100,7 +103,10 @@ drifted — integration should do the same at connect.
    - water Button (f906 ← `08 00`)
    - binary sensors from fd86 (low water / low battery / watering needed)
    - timestamp sensors fd87 next watering / fd88 next empty tank; duration fd89
-8. [ ] Clock sync at connect (fd01/fd02)
+8. [x] Clock sync at connect (fd02, ±60 s tolerance, Pot only — mirrors
+   BaseTask.checkAndUpdateTime)
+8b. [x] Device info (name fe03, firmware 2a26, serial 2a25) → HA device registry
+8c. [x] Water Button entity (button.py, Pot only)
 9. [ ] README: Flower Power vs Pot distinction, new entities, troubleshooting
 10. [ ] Commit, push to `denics`, open PR to `origin`
 
@@ -119,9 +125,11 @@ votre Parrot Pot." / "Enter the MAC address of your Parrot Pot.", field
 "Adresse MAC" / "MAC address".
 
 ## Open questions
-- Empirical validation on user's old hardware via DEBUG raw-byte logs:
+- Empirical validation on user's hardware via DEBUG raw-byte logs:
   which chars actually exist, what the raw values look like.
-- Confirm Flower Power vs Pot from GATT service list + firmware revision.
+- Model confirmed Parrot Pot by user (has tank). fw revision now read at
+  first poll (check DEBUG logs) — determines whether Plant DR (fd80) is
+  available (requires fw >= 2.0.3).
 - Later: switch coordinator to notify-based live mode for faster updates
   (watch BLE duty cycle / battery life).
 - History download via fb00 upload service: format still undocumented.
