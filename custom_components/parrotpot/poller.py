@@ -1,3 +1,13 @@
+"""BLE poller for Parrot Pot / Flower Power devices.
+
+Protocol details reverse-engineered from the official Android app
+(com.parrot.flowerpower, decompiled with jadx). See AGENTS.md for the
+full protocol notes.
+
+Live sensor values come from the live service 39e1fa00 as little-endian
+IEEE-754 float32 (ByteData.getFloat in the app). Battery is the standard
+BLE characteristic 0x2a19, a plain uint8 percent.
+"""
 import struct
 import logging
 from bleak import BleakClient
@@ -6,67 +16,163 @@ from homeassistant.components.bluetooth import async_ble_device_from_address
 
 _LOGGER = logging.getLogger(__name__)
 
+UUID_SUFFIX = "-84a8-11e2-afba-0002a5d5c51b"
+
+# --- Services ---
+SERVICE_LIVE = "39e1fa00" + UUID_SUFFIX
+SERVICE_WATERING = "39e1f900" + UUID_SUFFIX
+SERVICE_PLANT_DR = "39e1fd80" + UUID_SUFFIX
+SERVICE_CLOCK = "39e1fd00" + UUID_SUFFIX
+SERVICE_BATTERY = "0000180f-0000-1000-8000-00805f9b34fb"
+SERVICE_DEVICE_INFO = "0000180a-0000-1000-8000-00805f9b34fb"
+
+# --- Characteristics (all present on every device) ---
 CHARACTERISTICS = {
-    "soil_moisture": "39e1fc01-84a8-11e2-afba-0002a5d5c51b",
-    "temperature":   "39e1fc02-84a8-11e2-afba-0002a5d5c51b",
-    "light":         "39e1fc04-84a8-11e2-afba-0002a5d5c51b",
-    "battery":       "39e1fc05-84a8-11e2-afba-0002a5d5c51b",
-    "water_level":   "39e1fc07-84a8-11e2-afba-0002a5d5c51b"
+    "soil_moisture": "39e1fa09" + UUID_SUFFIX,  # LE float32, %
+    "temperature": "39e1fa0a" + UUID_SUFFIX,    # LE float32, °C
+    "light": "39e1fa0b" + UUID_SUFFIX,          # LE float32, mol/m²/d
+    "battery": "00002a19-0000-1000-8000-00805f9b34fb",  # uint8, %
 }
+
+# --- Characteristics only on Parrot Pot (watering service present) ---
+CHAR_TANK_LEVEL = "39e1f907" + UUID_SUFFIX      # uint16 LE, %
+CHAR_WATERING_CMD = "39e1f906" + UUID_SUFFIX    # write uint16 LE 8 = water
+
+# --- Plant DR (Parrot Pot, firmware >= 2.0.3) ---
+CHAR_PLANT_DR_STATUS_FLAGS = "39e1fd86" + UUID_SUFFIX    # uint8 bitmask
+CHAR_PLANT_DR_NEXT_WATERING = "39e1fd87" + UUID_SUFFIX   # uint32 LE, epoch s
+CHAR_PLANT_DR_NEXT_EMPTY_TANK = "39e1fd88" + UUID_SUFFIX # uint32 LE, epoch s
+
+# Status flag bitmask (HawaiiBleConstants in the app)
+FLAG_UNREAD_ENTRIES = 1
+FLAG_AVAILABLE = 2
+FLAG_STARTING = 4
+FLAG_LOW_WATER = 8
+FLAG_LOW_BATTERY = 16
+FLAG_WATERING_NEEDED = 32
+
 
 class ParrotPotPoller:
     def __init__(self, hass, mac):
         self._hass = hass
         self._mac = mac
+        self.has_tank = False       # set per poll from GATT service discovery
+        self.has_plant_dr = False
 
     async def get_data(self):
         device = async_ble_device_from_address(self._hass, self._mac, connectable=True)
         if not device:
-            _LOGGER.error("Parrot Pot introuvable à l'adresse %s", self._mac)
+            _LOGGER.error("Parrot Pot not found at address %s", self._mac)
             return None
 
         await close_stale_connections(device)
         results = {}
 
         try:
-            async with await establish_connection(BleakClient, device, self._mac, timeout=15.0) as client:
+            async with await establish_connection(
+                BleakClient, device, self._mac, timeout=15.0
+            ) as client:
+                # Capability probe: which optional services does the device expose?
+                service_uuids = {s.uuid.lower() for s in client.services}
+                self.has_tank = SERVICE_WATERING in service_uuids
+                self.has_plant_dr = SERVICE_PLANT_DR in service_uuids
+                _LOGGER.debug(
+                    "GATT services: %s (has_tank=%s, has_plant_dr=%s)",
+                    sorted(service_uuids), self.has_tank, self.has_plant_dr,
+                )
+
+                # Live values + battery
                 for key, uuid in CHARACTERISTICS.items():
                     try:
                         data = await client.read_gatt_char(uuid)
-                        _LOGGER.debug("Lecture %s: %s", key, data.hex())
+                        _LOGGER.debug("Read %s [%s]: %s", key, uuid, data.hex())
                         results[key] = self.decode(data, key)
                     except Exception as e:
-                        _LOGGER.warning("Erreur lecture %s: %s", key, e)
+                        _LOGGER.warning("Read error %s: %s", key, e)
                         results[key] = None
+
+                # Parrot Pot only: tank level + Plant DR data
+                if self.has_tank:
+                    results["water_level"] = await self._read_uint16(client, CHAR_TANK_LEVEL)
+                else:
+                    results["water_level"] = None
+
+                if self.has_plant_dr:
+                    flags = await self._read_uint8(client, CHAR_PLANT_DR_STATUS_FLAGS)
+                    if flags is not None:
+                        results["low_water"] = bool(flags & FLAG_LOW_WATER)
+                        results["low_battery_flag"] = bool(flags & FLAG_LOW_BATTERY)
+                        results["watering_needed"] = bool(flags & FLAG_WATERING_NEEDED)
+                        results["status_flags_raw"] = flags
+                    results["next_watering"] = await self._read_uint32(client, CHAR_PLANT_DR_NEXT_WATERING)
+                    results["next_empty_tank"] = await self._read_uint32(client, CHAR_PLANT_DR_NEXT_EMPTY_TANK)
+
                 return results
         except Exception as e:
-            _LOGGER.error("Échec de connexion au Parrot Pot : %s", e)
+            _LOGGER.error("Failed to connect to Parrot Pot: %s", e)
             return None
 
     def decode(self, data, key):
+        """Decode a characteristic value.
+
+        Live-service values are little-endian IEEE-754 float32
+        (ByteData.getFloat in the official app). Battery is a plain
+        uint8 percent on the standard 0x2a19 characteristic.
+        """
         if not data or len(data) < 1:
             return None
-
         try:
-            if key == "temperature" and len(data) >= 4:
-                raw = struct.unpack_from("<I", data, 0)[0]
-                return round(raw / 3276.8, 1)
-
-            if key == "soil_moisture" and len(data) >= 2:
-                raw = struct.unpack_from("<H", data, 0)[0]
-                return round(raw / 100.0, 1)
-
-            if key == "light" and len(data) >= 2:
-                raw = struct.unpack_from("<H", data, 0)[0]
-                return raw
-
-            if key == "battery" and len(data) >= 4:
-                raw = struct.unpack_from("<I", data, 0)[0]
-                return round(raw / 65535 * 100)
-
-            if key == "water_level" and len(data) >= 1:
+            if key == "battery":
                 return int(data[0])
-
+            if key in ("soil_moisture", "temperature", "light"):
+                if len(data) < 4:
+                    _LOGGER.warning("Short payload for %s: %s", key, data.hex())
+                    return None
+                return round(struct.unpack_from("<f", data, 0)[0], 2)
         except Exception as e:
-            _LOGGER.error("Erreur décodage %s: %s", key, e)
+            _LOGGER.error("Decode error %s: %s", key, e)
         return None
+
+    async def _read_uint8(self, client, uuid):
+        try:
+            data = await client.read_gatt_char(uuid)
+            _LOGGER.debug("Read uint8 [%s]: %s", uuid, data.hex())
+            return int(data[0]) if data else None
+        except Exception as e:
+            _LOGGER.warning("Read error [%s]: %s", uuid, e)
+            return None
+
+    async def _read_uint16(self, client, uuid):
+        try:
+            data = await client.read_gatt_char(uuid)
+            _LOGGER.debug("Read uint16 [%s]: %s", uuid, data.hex())
+            return struct.unpack_from("<H", data, 0)[0] if len(data) >= 2 else None
+        except Exception as e:
+            _LOGGER.warning("Read error [%s]: %s", uuid, e)
+            return None
+
+    async def _read_uint32(self, client, uuid):
+        try:
+            data = await client.read_gatt_char(uuid)
+            _LOGGER.debug("Read uint32 [%s]: %s", uuid, data.hex())
+            return struct.unpack_from("<I", data, 0)[0] if len(data) >= 4 else None
+        except Exception as e:
+            _LOGGER.warning("Read error [%s]: %s", uuid, e)
+            return None
+
+    async def water_plant(self):
+        """Trigger a watering cycle (Parrot Pot only).
+
+        The official app writes uint16 LE value 8 (bytes 08 00) to 39e1f906
+        (WaterThePlant.java).
+        """
+        device = async_ble_device_from_address(self._hass, self._mac, connectable=True)
+        if not device:
+            raise ConnectionError(f"Parrot Pot not found at address {self._mac}")
+
+        await close_stale_connections(device)
+        async with await establish_connection(
+            BleakClient, device, self._mac, timeout=15.0
+        ) as client:
+            await client.write_gatt_char(CHAR_WATERING_CMD, struct.pack("<H", 8), response=True)
+            _LOGGER.info("Watering command sent to %s", self._mac)
