@@ -107,6 +107,8 @@ drifted — integration should do the same at connect.
    BaseTask.checkAndUpdateTime)
 8b. [x] Device info (name fe03, firmware 2a26, serial 2a25) → HA device registry
 8c. [x] Water Button entity (button.py, Pot only)
+8d. [x] Binary sensors for Plant DR status flags fd86 (low water, low
+   battery, watering needed) in binary_sensor.py, gated on has_plant_dr
 9. [ ] README: Flower Power vs Pot distinction, new entities, troubleshooting
 10. [ ] Commit, push to `denics`, open PR to `origin`
 
