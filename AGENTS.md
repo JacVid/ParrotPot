@@ -109,6 +109,15 @@ drifted — integration should do the same at connect.
 8c. [x] Water Button entity (button.py, Pot only)
 8d. [x] Binary sensors for Plant DR status flags fd86 (low water, low
    battery, watering needed) in binary_sensor.py, gated on has_plant_dr
+8e. [x] Timestamp sensors fd87/fd88 (next watering / next empty tank) in
+   sensor.py, SensorDeviceClass.TIMESTAMP, aware UTC datetime; unset
+   values (>= 0xFFFFFFF0, cf. app) map to None
+8f. [x] Refactor decode logic into protocol.py (pure, no HA/bleak deps)
+8g. [x] Test suite in tests/ (pytest + pytest-asyncio, run via
+   .venv/bin/python -m pytest; requirements-test.txt). Fake BLE client in
+   tests/conftest.py stubs bleak/HA modules — 22 tests: decode units,
+   status flags, epoch handling, full Parrot Pot poll, Flower Power poll,
+   capability gating, clock sync, water command, connection failures
 9. [ ] README: Flower Power vs Pot distinction, new entities, troubleshooting
 10. [ ] Commit, push to `denics`, open PR to `origin`
 

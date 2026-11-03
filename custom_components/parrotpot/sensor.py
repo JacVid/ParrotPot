@@ -42,6 +42,16 @@ SENSOR_META = {
 }
 
 
+# Plant DR predictive dates (Parrot Pot, firmware >= 2.0.3):
+# uint32 LE epoch seconds on 39e1fd87 / 39e1fd88
+TIMESTAMP_SENSORS = {
+    "next_watering": {"name": "Next watering", "icon": "mdi:calendar-clock"},
+    "next_empty_tank": {"name": "Next empty tank", "icon": "mdi:calendar-remove"},
+}
+
+from . import protocol
+
+
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = hass.data[DOMAIN][entry.entry_id]
     entities = [
@@ -59,6 +69,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
             enabled_default=coordinator.poller.has_tank,
         )
     )
+    # Plant DR predictive timestamps (next watering / next empty tank)
+    if coordinator.poller.has_plant_dr:
+        entities.extend(
+            ParrotTimestampSensor(coordinator, entry.entry_id, key, meta["name"], meta["icon"])
+            for key, meta in TIMESTAMP_SENSORS.items()
+        )
     async_add_entities(entities)
 
 
@@ -80,3 +96,26 @@ class ParrotSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator.data.get(self._key) if self.coordinator.data else None
+
+
+class ParrotTimestampSensor(CoordinatorEntity, SensorEntity):
+    """Plant DR predictive date (39e1fd87 next watering, 39e1fd88 next empty tank).
+
+    The device reports uint32 LE epoch seconds; converted to a UTC datetime
+    for SensorDeviceClass.TIMESTAMP.
+    """
+
+    def __init__(self, coordinator, entry_id, key, name, icon):
+        super().__init__(coordinator)
+        self._key = key
+        self._attr_unique_id = f"{entry_id}_{key}"
+        self._attr_name = f"Pot {name}"
+        self._attr_device_class = SensorDeviceClass.TIMESTAMP
+        self._attr_icon = icon
+        self._attr_device_info = coordinator.poller.device_info()
+
+    @property
+    def native_value(self):
+        if not self.coordinator.data:
+            return None
+        return protocol.epoch_to_utc(self.coordinator.data.get(self._key))

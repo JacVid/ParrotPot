@@ -15,6 +15,7 @@ from bleak import BleakClient
 from bleak_retry_connector import establish_connection, close_stale_connections
 from homeassistant.components.bluetooth import async_ble_device_from_address
 from .const import DOMAIN
+from . import protocol
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -118,9 +119,7 @@ class ParrotPotPoller:
                 if self.has_plant_dr:
                     flags = await self._read_uint8(client, CHAR_PLANT_DR_STATUS_FLAGS)
                     if flags is not None:
-                        results["low_water"] = bool(flags & FLAG_LOW_WATER)
-                        results["low_battery_flag"] = bool(flags & FLAG_LOW_BATTERY)
-                        results["watering_needed"] = bool(flags & FLAG_WATERING_NEEDED)
+                        results.update(protocol.parse_status_flags(flags))
                         results["status_flags_raw"] = flags
                     results["next_watering"] = await self._read_uint32(client, CHAR_PLANT_DR_NEXT_WATERING)
                     results["next_empty_tank"] = await self._read_uint32(client, CHAR_PLANT_DR_NEXT_EMPTY_TANK)
@@ -131,49 +130,26 @@ class ParrotPotPoller:
             return None
 
     def decode(self, data, key):
-        """Decode a characteristic value.
-
-        Live-service values are little-endian IEEE-754 float32
-        (ByteData.getFloat in the official app). Battery is a plain
-        uint8 percent on the standard 0x2a19 characteristic.
-        """
-        if not data or len(data) < 1:
-            return None
-        try:
-            if key == "battery":
-                return int(data[0])
-            if key in ("soil_moisture", "temperature", "light"):
-                if len(data) < 4:
-                    _LOGGER.warning("Short payload for %s: %s", key, data.hex())
-                    return None
-                return round(struct.unpack_from("<f", data, 0)[0], 2)
-        except Exception as e:
-            _LOGGER.error("Decode error %s: %s", key, e)
-        return None
+        """Decode a characteristic value (see protocol.py)."""
+        value = protocol.decode_live(data, key)
+        if value is None and key in protocol.FLOAT_KEYS and data and len(data) < 4:
+            _LOGGER.warning("Short payload for %s: %s", key, data.hex())
+        return value
 
     async def _read_uint8(self, client, uuid):
-        try:
-            data = await client.read_gatt_char(uuid)
-            _LOGGER.debug("Read uint8 [%s]: %s", uuid, data.hex())
-            return int(data[0]) if data else None
-        except Exception as e:
-            _LOGGER.warning("Read error [%s]: %s", uuid, e)
-            return None
+        return await self._read_decoded(client, uuid, protocol.decode_uint8)
 
     async def _read_uint16(self, client, uuid):
-        try:
-            data = await client.read_gatt_char(uuid)
-            _LOGGER.debug("Read uint16 [%s]: %s", uuid, data.hex())
-            return struct.unpack_from("<H", data, 0)[0] if len(data) >= 2 else None
-        except Exception as e:
-            _LOGGER.warning("Read error [%s]: %s", uuid, e)
-            return None
+        return await self._read_decoded(client, uuid, protocol.decode_uint16)
 
     async def _read_uint32(self, client, uuid):
+        return await self._read_decoded(client, uuid, protocol.decode_uint32)
+
+    async def _read_decoded(self, client, uuid, decoder):
         try:
             data = await client.read_gatt_char(uuid)
-            _LOGGER.debug("Read uint32 [%s]: %s", uuid, data.hex())
-            return struct.unpack_from("<I", data, 0)[0] if len(data) >= 4 else None
+            _LOGGER.debug("Read [%s]: %s", uuid, data.hex())
+            return decoder(data)
         except Exception as e:
             _LOGGER.warning("Read error [%s]: %s", uuid, e)
             return None
