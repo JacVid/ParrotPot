@@ -88,13 +88,13 @@ drifted — integration should do the same at connect.
 2. [x] This AGENTS.md with all findings
 3. [x] `.gitignore` for `parrot/`
 4. [x] translations/en.json + translations/fr.json (French strings preserved)
-5. [ ] Rewrite `poller.py`:
+5. [x] Rewrite `poller.py`:
    - moisture fa09, temp fa0a, light fa0b as LE float32; battery 2a19 uint8 %
    - tank f907 uint16 LE ONLY if watering service 39e1f900 present
    - capability probe via `client.services` (has_tank / has_plant_dr)
    - DEBUG logging of raw bytes for every read (validate on real hardware)
    - drop all fc-series reads
-6. [ ] sensor.py: proper device classes, state_class=MEASUREMENT, light unit
+6. [x] sensor.py: proper device classes, state_class=MEASUREMENT, light unit
    mol/m²/d (remove fake lux); conditionally create water_level entity
 7. [ ] New entities (Pot only, gated on services present):
    - water Button (f906 ← `08 00`)
