@@ -41,6 +41,23 @@ CHARACTERISTICS = {
 CHAR_TANK_LEVEL = "39e1f907" + UUID_SUFFIX      # uint16 LE, %
 CHAR_WATERING_CMD = "39e1f906" + UUID_SUFFIX    # write uint16 LE 8 = water
 
+# --- Live service extras ---
+CHAR_LED_STATE = "39e1fa07" + UUID_SUFFIX              # write 1 = blink, 0 = off
+
+# --- Raw (uncalibrated) live characteristics, Parrot official polynomials.
+# Fallback for older firmware that only exposes uint16 raw values instead of
+# the calibrated float32 fa09/fa0a/fa0b. Conversions in protocol.py.
+CHAR_RAW_LIGHT = "39e1fa01" + UUID_SUFFIX           # uint16 LE -> mol/m²/d
+CHAR_RAW_TEMPERATURE = "39e1fa04" + UUID_SUFFIX     # uint16 LE -> °C
+CHAR_RAW_SOIL_MOISTURE = "39e1fa05" + UUID_SUFFIX   # uint16 LE -> %
+
+# --- Watering config (Parrot Pot) ---
+CHAR_WATERING_MODE = "39e1f90d" + UUID_SUFFIX          # uint8: 0 = manual, 1 = auto
+CHAR_WATERING_ALGORITHM_STATUS = "39e1f912" + UUID_SUFFIX  # uint8 read/write
+
+WATERING_MODE_MANUAL = 0
+WATERING_MODE_AUTO = 1
+
 # --- Plant DR (Parrot Pot, firmware >= 2.0.3) ---
 CHAR_PLANT_DR_STATUS_FLAGS = "39e1fd86" + UUID_SUFFIX    # uint8 bitmask
 CHAR_PLANT_DR_NEXT_WATERING = "39e1fd87" + UUID_SUFFIX   # uint32 LE, epoch s
@@ -110,9 +127,38 @@ class ParrotPotPoller:
                         _LOGGER.warning("Read error %s: %s", key, e)
                         results[key] = None
 
+                # Fallback: older firmware may only expose the raw uint16
+                # characteristics (fa01/fa04/fa05). Decode with Parrot's
+                # official polynomials (protocol.RAW_CONVERTERS).
+                for key, raw_uuid in (
+                    ("light", CHAR_RAW_LIGHT),
+                    ("temperature", CHAR_RAW_TEMPERATURE),
+                    ("soil_moisture", CHAR_RAW_SOIL_MOISTURE),
+                ):
+                    if results.get(key) is not None:
+                        continue
+                    try:
+                        data = await client.read_gatt_char(raw_uuid)
+                        _LOGGER.debug(
+                            "Read raw %s [%s]: %s", key, raw_uuid, data.hex()
+                        )
+                        results[key] = protocol.decode_raw(data, key)
+                        if results[key] is not None:
+                            _LOGGER.info(
+                                "%s from raw characteristic %s (calibrated "
+                                "characteristic missing on this firmware)",
+                                key, raw_uuid,
+                            )
+                    except Exception as e:
+                        _LOGGER.debug("Raw fallback unavailable for %s: %s", key, e)
+
                 # Parrot Pot only: tank level + Plant DR data
                 if self.has_tank:
                     results["water_level"] = await self._read_uint16(client, CHAR_TANK_LEVEL)
+                    results["watering_mode"] = await self._read_uint8(client, CHAR_WATERING_MODE)
+                    results["watering_algorithm_status"] = await self._read_uint8(
+                        client, CHAR_WATERING_ALGORITHM_STATUS
+                    )
                 else:
                     results["water_level"] = None
 
@@ -233,3 +279,32 @@ class ParrotPotPoller:
                 _LOGGER.debug("Device clock in sync (drift %d s)", device_time - local_time)
         except Exception as e:
             _LOGGER.debug("Clock sync failed: %s", e)
+
+    async def set_led(self, on: bool):
+        """Blink the notification LED until disconnect (write 1) or turn it off.
+
+        The mahoutech BLE API doc documents this on the LED handler (39e1fa07).
+        """
+        await self._write_uint8(CHAR_LED_STATE, 1 if on else 0)
+
+    async def set_watering_mode(self, mode: int):
+        """Write watering mode (39e1f90d): 0 = manual, 1 = auto."""
+        if mode not in (WATERING_MODE_MANUAL, WATERING_MODE_AUTO):
+            raise ValueError(f"invalid watering mode: {mode}")
+        await self._write_uint8(CHAR_WATERING_MODE, mode)
+
+    async def set_watering_algorithm_status(self, status: int):
+        """Enable/disable the watering algorithm (39e1f912), cf. the app's
+        SetWateringAlgorithmStatus task."""
+        await self._write_uint8(CHAR_WATERING_ALGORITHM_STATUS, status)
+
+    async def _write_uint8(self, uuid, value):
+        device = async_ble_device_from_address(self._hass, self._mac, connectable=True)
+        if not device:
+            raise ConnectionError(f"Parrot Pot not found at address {self._mac}")
+        await close_stale_connections(device)
+        async with await establish_connection(
+            BleakClient, device, self._mac, timeout=15.0
+        ) as client:
+            await client.write_gatt_char(uuid, bytes([value]), response=True)
+            _LOGGER.info("Wrote %d to %s", value, uuid)

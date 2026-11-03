@@ -77,3 +77,33 @@ class TestEpochToUtc:
 
     def test_result_is_aware(self):
         assert protocol.epoch_to_utc(1700000000).tzinfo == timezone.utc
+
+
+class TestRawConversions:
+    """Parrot official polynomials (node-flower-power sandeepmistry PR #8)."""
+
+    def test_temperature_polynomial_and_clamp(self):
+        assert protocol.convert_raw_temperature(0) == -10.0        # clamp
+        assert protocol.convert_raw_temperature(500) == 10.71
+        assert protocol.convert_raw_temperature(700) == 21.03
+        assert protocol.convert_raw_temperature(65535) == 55.0     # clamp
+
+    def test_soil_moisture_polynomial_and_clamp(self):
+        assert protocol.convert_raw_soil_moisture(65535) == 60.0   # clamp
+        assert 0.0 <= protocol.convert_raw_soil_moisture(0) <= 60.0
+        # monotonic-ish sanity: mid-range is in physical range
+        for raw in (500, 1000, 2000, 4000, 8000):
+            m = protocol.convert_raw_soil_moisture(raw)
+            assert 0.0 <= m <= 60.0
+
+    def test_sunlight_polynomial(self):
+        assert protocol.convert_raw_sunlight(0) is None            # div-by-zero guard
+        assert protocol.convert_raw_sunlight(1000) == 10.95
+        # monotone decreasing raw -> value
+        assert protocol.convert_raw_sunlight(5000) < protocol.convert_raw_sunlight(1000)
+
+    def test_decode_raw_dispatch(self):
+        import struct
+        assert protocol.decode_raw(struct.pack("<H", 500), "temperature") == 10.71
+        assert protocol.decode_raw(b"", "temperature") is None
+        assert protocol.decode_raw(struct.pack("<H", 500), "unknown") is None

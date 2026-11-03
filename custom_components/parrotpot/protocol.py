@@ -12,6 +12,25 @@ from datetime import datetime, timezone
 # Live service (39e1fa00) keys decoded as IEEE-754 LE float32
 FLOAT_KEYS = ("soil_moisture", "temperature", "light")
 
+# Raw (uncalibrated) live characteristic UUID suffixes, used as fallback on
+# older firmware that only exposes uint16 raw values. Conversion polynomials
+# are Parrot's official FlowerPower-BLE API constants (node-flower-power
+# sandeepmistry PR #8, commit 9dcb7e2), cross-checked against the
+# decompiled Android app which names fa01 LIVE_LIGHT_SENSOR, fa04
+# LIVE_AIR_TEMPERATURE and fa05 LIVE_SOIL_PERCENT_VWC.
+RAW_CHAR_KEYS = {
+    "39e1fa01": "light",           # raw sunlight -> mol/m²/d
+    "39e1fa04": "temperature",     # raw air temperature -> °C
+    "39e1fa05": "soil_moisture",   # raw soil VWC -> %
+}
+
+# Calibrated (fa09/fa0a/fa0b) -> raw fallback characteristic
+CALIBRATED_TO_RAW = {
+    "soil_moisture": "39e1fa05",
+    "temperature": "39e1fa04",
+    "light": "39e1fa01",
+}
+
 # Plant DR status flag bitmask (39e1fd86, HawaiiBleConstants)
 FLAG_UNREAD_ENTRIES = 1
 FLAG_AVAILABLE = 2
@@ -45,6 +64,55 @@ def decode_live(data, key):
     if key in FLOAT_KEYS:
         return decode_float(data)
     return None
+
+
+# --- Raw uint16 conversions (Parrot official polynomials) ---
+# Sources: FlowerPower-BLE API via node-flower-power (sandeepmistry PR #8);
+# mahoutech/smart-home parrotpot-ble-api.md. These are the values the
+# device's ADC produces before on-device calibration; older firmware may
+# only expose these (fa01/fa04/fa05), so they serve as a fallback.
+
+def convert_raw_temperature(raw):
+    """Raw uint16 -> °C. Cubic polynomial, clamped to [-10, 55] (official)."""
+    t = (3.044e-8 * raw ** 3
+         - 8.038e-5 * raw ** 2
+         + 0.1149 * raw
+         - 30.449999999999999)
+    return round(max(-10.0, min(55.0, t)), 2)
+
+
+def convert_raw_soil_moisture(raw):
+    """Raw uint16 -> VWC %. Quartic + cubic chain, clamped to [0, 60]
+    (official polynomial)."""
+    m = 11.4293 + (1.0698e-9 * raw ** 4
+                   - 1.52538e-6 * raw ** 3
+                   + 8.66976e-4 * raw ** 2
+                   - 0.169422 * raw)
+    m = 100.0 * (4.5e-6 * m ** 3 - 5.5e-4 * m ** 2 + 0.0292 * m - 0.053)
+    return round(max(0.0, min(60.0, m)), 2)
+
+
+def convert_raw_sunlight(raw):
+    """Raw uint16 -> daily light in mol/m²/d (0.0864 * 192773.17 * raw^-1.0606619)."""
+    if raw <= 0:
+        return None
+    return round(0.08640000000000001 * (192773.17000000001 * raw ** -1.0606619), 2)
+
+
+RAW_CONVERTERS = {
+    "temperature": convert_raw_temperature,
+    "soil_moisture": convert_raw_soil_moisture,
+    "light": convert_raw_sunlight,
+}
+
+
+def decode_raw(data, key):
+    """Decode a raw uint16 characteristic via the official polynomial."""
+    raw = decode_uint16(data)
+    if raw is None:
+        return None
+    converter = RAW_CONVERTERS.get(key)
+    return converter(raw) if converter else None
 
 
 def decode_uint8(data):
