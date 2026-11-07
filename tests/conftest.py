@@ -128,8 +128,9 @@ def _install_stubs():
             def async_create_entry(self, **kw):
                 return {"type": "create_entry", **kw}
 
-            async def _async_set_unique_id(self, uid):
+            async def async_set_unique_id(self, uid):
                 self.unique_id = uid
+                return None
 
             def _abort_if_unique_id_configured(self):
                 if self.unique_id in self._configured:

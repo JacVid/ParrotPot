@@ -27,7 +27,7 @@ class ParrotPotConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             mac = normalize_mac(user_input.get("mac", ""))
             if mac is None:
                 return self.async_show_form(step_id="user", data_schema=vol.Schema({vol.Required("mac"): str}), errors={"mac": "invalid_mac"})
-            await self._async_set_unique_id(mac)
+            await self.async_set_unique_id(mac)
             self._abort_if_unique_id_configured()
             return self.async_create_entry(title="Parrot Pot", data={"mac": mac})
         return self.async_show_form(step_id="user", data_schema=vol.Schema({vol.Required("mac"): str}))
