@@ -1,1 +1,10 @@
-{"name": "Parrot Pot","content_in_root": false,"domains": ["parrot_pot"],"homeassistant": "2026.4.3","persistent_directory": "parrot_pot","render_readme": true,"requirements": []}
+{
+  "name": "Parrot Pot",
+  "content_in_root": false,
+  "domains": [
+    "parrotpot"
+  ],
+  "homeassistant": "2024.1.0",
+  "render_readme": true,
+  "requirements": []
+}

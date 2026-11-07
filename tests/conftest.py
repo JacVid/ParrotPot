@@ -39,6 +39,28 @@ def _install_stubs():
         # stash so tests can set the client served by establish_connection
         brc._fake = {"client": None}
 
+    if "voluptuous" not in sys.modules:
+        vol_mod = _mod("voluptuous")
+
+        class Required:
+            def __init__(self, key, **kw):
+                self.key = key
+
+        class Invalid(Exception):
+            pass
+
+        class Schema:
+            def __init__(self, schema):
+                self.schema = schema
+
+            def __call__(self, data):
+                return data
+
+        vol_mod.Required = Required
+        vol_mod.Invalid = Invalid
+        vol_mod.Schema = Schema
+        sys.modules["voluptuous"] = vol_mod
+
     if "homeassistant" not in sys.modules:
         ha = _mod("homeassistant", package=True)
         components = _mod("homeassistant.components", package=True)
@@ -81,6 +103,42 @@ def _install_stubs():
         sys.modules["homeassistant.helpers"] = helpers
         sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator
         sys.modules["homeassistant.helpers.device_registry"] = device_registry
+
+    if "homeassistant.config_entries" not in sys.modules:
+        config_entries = _mod("homeassistant.config_entries")
+
+        class AbortFlow(Exception):
+            def __init__(self, reason):
+                self.reason = reason
+
+        class ConfigFlow:
+            VERSION = 1
+            _configured = set()  # registry of configured unique IDs (tests mutate)
+
+            def __init_subclass__(cls, domain=None, **kwargs):
+                super().__init_subclass__(**kwargs)
+                cls.domain = domain
+
+            def __init__(self):
+                self.unique_id = None
+
+            def async_show_form(self, **kw):
+                return {"type": "form", **kw}
+
+            def async_create_entry(self, **kw):
+                return {"type": "create_entry", **kw}
+
+            async def _async_set_unique_id(self, uid):
+                self.unique_id = uid
+
+            def _abort_if_unique_id_configured(self):
+                if self.unique_id in self._configured:
+                    raise AbortFlow("already_configured")
+
+        config_entries.ConfigFlow = ConfigFlow
+        config_entries.AbortFlow = AbortFlow
+        sys.modules["homeassistant"].config_entries = config_entries
+        sys.modules["homeassistant.config_entries"] = config_entries
 
 
 def _FakeConnection(client):

@@ -1,7 +1,7 @@
 {
   "domain": "parrotpot",
   "name": "Parrot Pot",
-  "version": "1.0.b",
+  "version": "1.0.0",
   "dependencies": ["bluetooth"],
   "bluetooth": [
     {
