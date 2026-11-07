@@ -43,3 +43,54 @@ class TestNormalizeMac:
         # covered here for helper completeness; form rendering is HA's job
         assert normalize_mac(None) is None
         assert normalize_mac("") is None
+
+
+@pytest.mark.asyncio
+class TestInvalidMac:
+    async def test_not_a_mac(self):
+        flow = ParrotPotConfigFlow()
+        result = await flow.async_step_user({"mac": "not-a-mac"})
+        assert result["type"] == "form"
+        assert result["errors"] == {"mac": "invalid_mac"}
+
+    async def test_five_octets(self):
+        flow = ParrotPotConfigFlow()
+        result = await flow.async_step_user({"mac": "A0:14:3D:12:34"})
+        assert result["type"] == "form"
+        assert result["errors"] == {"mac": "invalid_mac"}
+
+    async def test_seven_octets(self):
+        flow = ParrotPotConfigFlow()
+        result = await flow.async_step_user({"mac": "A0:14:3D:12:34:56:78"})
+        assert result["type"] == "form"
+        assert result["errors"] == {"mac": "invalid_mac"}
+
+    async def test_non_hex_octet(self):
+        flow = ParrotPotConfigFlow()
+        result = await flow.async_step_user({"mac": "ZZ:14:3D:12:34:56"})
+        assert result["type"] == "form"
+        assert result["errors"] == {"mac": "invalid_mac"}
+
+    async def test_single_octet_garbage(self):
+        flow = ParrotPotConfigFlow()
+        result = await flow.async_step_user({"mac": "gg"})
+        assert result["type"] == "form"
+        assert result["errors"] == {"mac": "invalid_mac"}
+
+    async def test_mixed_separators_rejected(self):
+        flow = ParrotPotConfigFlow()
+        result = await flow.async_step_user({"mac": "A0:14-3D:12-34:56"})
+        assert result["type"] == "form"
+        assert result["errors"] == {"mac": "invalid_mac"}
+
+
+@pytest.mark.asyncio
+class TestDuplicateMac:
+    async def test_duplicate_aborts_already_configured(self):
+        from homeassistant.config_entries import AbortFlow, ConfigFlow
+
+        ConfigFlow._configured.add("A0:14:3D:12:34:56")
+        flow = ParrotPotConfigFlow()
+        with pytest.raises(AbortFlow) as exc:
+            await flow.async_step_user({"mac": "a0-14-3d-12-34-56"})
+        assert exc.value.reason == "already_configured"
