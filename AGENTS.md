@@ -7,6 +7,13 @@ Keep this file up to date with every change.
 ## Repo state
 - Integration: `custom_components/parrotpot/` (BLE via bleak + bleak-retry-connector)
 - `parrot/` = decompiled official APK (package `com.parrot.flowerpower`). Gitignored, never commit.
+  **Agents: this folder is AVAILABLE as the primary, browsable protocol reference.**
+  Consult it directly for any protocol question instead of guessing. Key entry points:
+  - `parrot/sources/com/parrot/flowerpower/android/ble/service/Tasks/BaseTask.java` — `checkAndUpdateTime()` (clock sync, cf. fd01/fd02 question)
+  - `.../Tasks/BleTaskHandler.java` — live mode start/stop, notify subscriptions
+  - `.../WaterThePlant.java` (or similar) — watering command
+  - `.../HawaiiBleConstants.java` — all characteristic UUIDs and masks
+  Read-only reference: never modify, never commit.
 - Remotes: `origin` = https://github.com/JacVid/ParrotPot.git, `denics` = https://github.com/denics/ParrotPot.git (fork, PR source)
 - Active branch: `feature/app-verified-protocol`
 
@@ -118,8 +125,12 @@ drifted — integration should do the same at connect.
    tests/conftest.py stubs bleak/HA modules — 22 tests: decode units,
    status flags, epoch handling, full Parrot Pot poll, Flower Power poll,
    capability gating, clock sync, water command, connection failures
-9. [ ] README: Flower Power vs Pot distinction, new entities, troubleshooting
-10. [ ] Commit, push to `denics`, open PR to `origin`
+9. [x] README: Flower Power vs Pot distinction, new entities, troubleshooting
+   (full rewrite for the hardware-validated v1.0: entity inventory, known
+   limitations incl. GAP-01, validation verdicts, install/troubleshooting)
+10. [ ] Ship to the `denics` fork: bring `main` up to date with the validated
+    v1.0 code and tag `v1.0.0`. Upstream PR to `origin` (JacVid/ParrotPot)
+    and HACS distribution deferred to v2.
 
 ## Translations — original French strings (PRESERVED)
 Old poller.py log strings (code will use English per HA convention; French
@@ -192,3 +203,18 @@ characteristic (fa05/fa04/fa01) via `protocol.RAW_CONVERTERS`.
 - Later: switch coordinator to notify-based live mode for faster updates
   (watch BLE duty cycle / battery life).
 - History download via fb00 upload service: format still undocumented.
+
+## Hardware validation (v1.0)
+Verified on the user's real Parrot Pot (2026-11, two independent poll cycles).
+VAL-03 clock behavior, deferred here from Phase 2:
+- `39e1fd02` (UTC time) read back **in sync — drift ±1 s** on both poll cycles
+  → judged in sync, so **no `39e1fd01` write ever fired**.
+- `39e1fd87` / `39e1fd88` (next watering / next empty tank) read `0` → unset;
+  Plant DR has not started on the device.
+- The fd02 read/write logic (±60 s tolerance, mirrors
+  `BaseTask.checkAndUpdateTime`) stays unchanged — the device keeps its own
+  clock correctly, so the fd01-vs-fd02 write-register question never fired in
+  practice.
+- Known gap from the same validation: tank-level char `39e1f907` returns a
+  single byte despite a full tank (GAP-01) → `water_level` unavailable;
+  documented in README "Known limitations", fix deferred to a follow-up plan.
