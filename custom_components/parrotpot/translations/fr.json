@@ -11,7 +11,7 @@
     },
     "error": {
       "cannot_connect": "Échec de connexion au Parrot Pot. Vérifiez qu'aucun autre appareil (téléphone/application) n'y est connecté.",
-      "invalid_mac": "Adresse MAC invalide. Utilisez six paires hexadécimales séparées par des deux-points ou des tirets (ex. A0:14:3D:12:34:56)."
+      "invalid_mac": "Adresse MAC invalide. Utilisez six paires hexadécimales séparées par des deux-points ou des tirets (ex. A0:14:3D:xx:xx:xx)."
     },
     "abort": {
       "already_configured": "Ce Parrot Pot est déjà configuré."
