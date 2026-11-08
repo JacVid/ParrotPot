@@ -1,7 +1,7 @@
 """BLE poller for Parrot Pot / Flower Power devices.
 
-Protocol details reverse-engineered from the official Android app
-(com.parrot.flowerpower, decompiled with jadx). See AGENTS.md for the
+Protocol details tested with the official Android app
+(com.parrot.flowerpower). See AGENTS.md for the
 full protocol notes.
 
 Live sensor values come from the live service 39e1fa00 as little-endian
