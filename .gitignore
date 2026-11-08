@@ -1,0 +1,9 @@
+# Decompiled official Parrot app sources (jadx) - reference only, never commit
+parrot/
+# working folders
+__pycache__/
+.venv/
+.pytest_cache/
+# pi
+.pi
+.planning
